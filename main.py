@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 
 # Настройка API
 API_BASE_URL = 'https://pro-api.solscan.io'
-API_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjcmVhdGVkQXQiOjE3Mjg5ODc3OTA2MDUsImVtYWlsIjoiZi5kLm0uYXNhbnRhQGdtYWlsLmNvbSIsImFjdGlvbiI6InRva2VuLWFwaSIsImFwaVZlcnNpb24iOiJ2MiIsImlhdCI6MTcyODk4Nzc5MH0.LlE62rUU41tsP-_9GjWl1Y0RYUSxXE6pfSISLWoE9W0'  # Вставьте ваш API-ключ
+API_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjcmVhdGVkQXQiOjE3MjQ0OTQ4NDk1MDEsImVtYWlsIjoiNG5tZGNhdEBnbWFpbC5jb20iLCJhY3Rpb24iOiJ0b2tlbi1hcGkiLCJhcGlWZXJzaW9uIjoidjIiLCJpYXQiOjE3MjQ0OTQ4NDl9.Hsg-RdpY3dwP8FiIbgnOuit_wdnPE1HVHQ03y6lYGkQ'  # Вставьте ваш API-ключ
 
 # Минимальная сумма перевода для фильтрации транзакций
 THRESHOLD_SOL = 50
@@ -14,60 +14,86 @@ def get_headers():
     """Функция для получения заголовков с API ключом."""
     return {
         'Accept': 'application/json',
-        'token': API_KEY
+        'token': API_KEY  # Используйте правильный API ключ
     }
 
+def get_all_wallet_transactions(wallet_address, limit=100):
+    """Получаем все транзакции для указанного кошелька с использованием пагинации, пропуская ошибки."""
+    url = f'{API_BASE_URL}/v2.0/account/transactions'
+    transactions = []
+    last_signature = None
+
+    while True:
+        params = {
+            'address': wallet_address,  # Убедитесь, что адрес кошелька правильный
+            'limit': limit
+        }
+        if last_signature:
+            params['before'] = last_signature
+
+        try:
+            response = requests.get(url, headers=get_headers(), params=params)
+            response.raise_for_status()  # Генерирует исключение для статусов ошибок
+            data = response.json().get('data', [])
+            if not data:
+                break  # Если данных больше нет, выходим из цикла
+            transactions.extend(data)
+            
+            # Обновляем last_signature для следующей страницы
+            last_signature = data[-1]['tx_hash']  # Используем последнюю транзакцию
+        except requests.exceptions.RequestException as e:
+            print(f"Пропускаем ошибку при получении транзакций: {e}")
+            break
+    
+    return transactions
+
 def get_wallet_transactions(wallet_address, limit=10):
-    """Получаем транзакции для указанного кошелька."""
+    """Получаем транзакции для указанного кошелька, пропуская ошибки."""
     url = f'{API_BASE_URL}/v2.0/account/transactions'
     params = {
         'address': wallet_address,
         'limit': limit
     }
-    response = requests.get(url, headers=get_headers(), params=params)
-    if response.status_code == 200:
+    try:
+        response = requests.get(url, headers=get_headers(), params=params)
+        response.raise_for_status()  # Генерирует исключение для статусов ошибок
         return response.json().get('data', [])
-    else:
-        print(f"Ошибка при получении транзакций: {response.status_code}")
-        return []
-
-def get_wallet_transfers(wallet_address):
-    """Получаем все переводы средств для указанного кошелька."""
-    url = f'{API_BASE_URL}/v2.0/account/transfer'
-    params = {
-        'address': wallet_address,
-        'flow': 'in',  # Интересуют только входящие транзакции
-        'page_size': 100
-    }
-    response = requests.get(url, headers=get_headers(), params=params)
-    if response.status_code == 200:
-        return response.json().get('data', [])
-    else:
-        print(f"Ошибка при получении переводов: {response.status_code}")
+    except requests.exceptions.RequestException as e:
+        print(f"Пропускаем ошибку при получении транзакций: {e}")
         return []
 
 def get_token_accounts(wallet_address):
-    """Получаем информацию о токенах в кошельке."""
+    """Получаем информацию о токенах в кошельке, пропуская ошибки."""
     url = f'{API_BASE_URL}/v2.0/account/token-accounts'
     params = {
         'address': wallet_address,
         'page_size': 10
     }
-    response = requests.get(url, headers=get_headers(), params=params)
-    if response.status_code == 200:
+    try:
+        response = requests.get(url, headers=get_headers(), params=params)
+        response.raise_for_status()  # Генерирует исключение для статусов ошибок
         return response.json().get('data', [])
-    else:
-        print(f"Ошибка при получении токенов: {response.status_code}")
+    except requests.exceptions.RequestException as e:
+        print(f"Пропускаем ошибку при получении токенов: {e}")
         return []
 
 def filter_large_transactions(transactions):
-    """Фильтруем транзакции с суммой ≥50 SOL."""
+    """Фильтруем транзакции с суммой ≥50 SOL, проверяя наличие ключа 'amount'."""
     large_txns = []
     for txn in transactions:
-        if 'amount' in txn:
-            amount = float(txn['amount']) / (10 ** txn['token_decimals'])
-            if amount >= THRESHOLD_SOL:
+        # Проверка наличия ключей 'amount' и 'token_decimals'
+        amount = txn.get('amount')
+        token_decimals = txn.get('token_decimals')
+
+        if amount is not None and token_decimals is not None:
+            # Преобразование суммы транзакции в правильный формат
+            sol_amount = float(amount) / (10 ** token_decimals)
+            if sol_amount >= THRESHOLD_SOL:
                 large_txns.append(txn)
+        else:
+            # Логируем транзакции, у которых нет нужных полей
+            print(f"Пропускаем транзакцию {txn.get('tx_hash', 'неизвестная транзакция')} без 'amount' или 'token_decimals'")
+    
     return large_txns
 
 def is_wallet_recent(wallet_address):
@@ -80,8 +106,9 @@ def is_wallet_recent(wallet_address):
 
 def find_mixer_wallets(wallet_address):
     """Ищем прослойки - кошельки, отправляющие одинаковые суммы на разные кошельки."""
-    transfers = get_wallet_transfers(wallet_address)
-    large_transfers = filter_large_transactions(transfers)
+    # Получаем все транзакции с использованием пагинации
+    transactions = get_all_wallet_transactions(wallet_address)
+    large_transfers = filter_large_transactions(transactions)
     
     mixer_wallets = []
     for transfer in large_transfers:
@@ -91,10 +118,17 @@ def find_mixer_wallets(wallet_address):
         # Группировка транзакций по суммам
         txn_groups = {}
         for txn in outgoing_txns:
-            amount = float(txn['amount']) / (10 ** txn['token_decimals'])
-            if amount not in txn_groups:
-                txn_groups[amount] = []
-            txn_groups[amount].append(txn['to_address'])
+            # Проверка наличия 'amount' и 'token_decimals' в исходящих транзакциях
+            amount = txn.get('amount')
+            token_decimals = txn.get('token_decimals')
+
+            if amount is not None and token_decimals is not None:
+                sol_amount = float(amount) / (10 ** token_decimals)
+                if sol_amount not in txn_groups:
+                    txn_groups[sol_amount] = []
+                txn_groups[sol_amount].append(txn['to_address'])
+            else:
+                print(f"Пропускаем транзакцию {txn.get('tx_hash', 'неизвестная транзакция')} без 'amount' или 'token_decimals'")
         
         # Проверка на прослойки
         for amount, recipients in txn_groups.items():
@@ -123,5 +157,6 @@ def main(initial_wallet):
         print("Прослойки не найдены.")
 
 if __name__ == "__main__":
+    # Замените "ВАШ_КОШЕЛЕК" на адрес вашего начального кошелька
     initial_wallet = "5o1aVDwR8osoVoNmacvnf2BvvHNpHfAfuCsf4FBCT9JE"
     main(initial_wallet)
